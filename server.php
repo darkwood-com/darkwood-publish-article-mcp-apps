@@ -204,7 +204,8 @@ function resourcesRead(array $params): array
 
 function getHelloHtml(): string
 {
-    return '<!DOCTYPE html>
+    return <<<'HTML'
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -213,12 +214,66 @@ function getHelloHtml(): string
   <style>
     body { font-family: system-ui, sans-serif; padding: 1rem; margin: 0; }
     h1 { font-size: 1.25rem; margin: 0 0 0.5rem 0; }
-    p { color: #666; margin: 0; }
+    #toolResult { white-space: pre-wrap; margin: 0.5rem 0 0; padding: 0.5rem; background: #f5f5f5; border-radius: 4px; font-size: 0.875rem; }
   </style>
 </head>
 <body>
-  <h1>Hello MCP App from PHP</h1>
-  <p>This UI is served by the PHP MCP server (stdio). The host will send the tool result here when ready.</p>
+  <h1>Hello MCP App</h1>
+  <pre id="toolResult">(waiting for tool result…)</pre>
+  <script>
+(function () {
+  var PROTOCOL_VERSION = '2026-01-26';
+  var pre = document.getElementById('toolResult');
+  var target = window.parent;
+  var initId = 1;
+  var pending = {};
+
+  function send(msg) {
+    target.postMessage(msg, '*');
+  }
+
+  function onMessage(ev) {
+    if (ev.source !== target) return;
+    var data = ev.data;
+    if (!data || data.jsonrpc !== '2.0') return;
+    if (data.id != null && pending[data.id]) {
+      pending[data.id](data.error ? new Error(data.error.message || 'Request failed') : null, data.result);
+      delete pending[data.id];
+    }
+    if (data.method === 'ui/notifications/tool-result' && data.params) {
+      var p = data.params;
+      if (p.content && Array.isArray(p.content)) {
+        var text = p.content.map(function (b) { return b.type === 'text' ? b.text : ''; }).filter(Boolean).join('\n');
+        pre.textContent = text || '(empty)';
+      } else {
+        pre.textContent = JSON.stringify(p, null, 2);
+      }
+    }
+  }
+
+  window.addEventListener('message', onMessage);
+
+  pending[initId] = function (err, result) {
+    if (err) {
+      pre.textContent = 'Initialize failed: ' + (err.message || String(err));
+      return;
+    }
+    send({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  };
+
+  send({
+    jsonrpc: '2.0',
+    id: initId,
+    method: 'ui/initialize',
+    params: {
+      appInfo: { name: 'Hello MCP App', version: '1.0.0' },
+      appCapabilities: {},
+      protocolVersion: PROTOCOL_VERSION
+    }
+  });
+})();
+  </script>
 </body>
-</html>';
+</html>
+HTML;
 }
