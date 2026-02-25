@@ -228,7 +228,7 @@ HTML;
         if ($method === 'resources/read' && isset($params['uri'])) {
             $msg .= ' uri=' . $params['uri'];
         }
-        error_log($msg);
+        file_put_contents('php://stderr', $msg . "\n", FILE_APPEND);
     }
 
     private function error(int $code, string $message, $id): array

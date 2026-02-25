@@ -4,11 +4,14 @@
   "type": "project",
   "license": "MIT",
   "require": {
-    "php": ">=8.1"
+    "php": ">=8.1",
+    "react/http": "^1.11",
+    "react/socket": "^1.17"
   },
   "autoload": {
     "psr-4": {
-      "Darkwood\\Mcp\\": "src/"
+      "Darkwood\\Mcp\\": "src/",
+      "Darkwood\\Flow\\": "src/Flow/"
     }
   }
 }

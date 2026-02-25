@@ -67,32 +67,32 @@ This produces a `.mcpb` file in the project directory (e.g. `darkwood-php-mcp-ap
 
 ## HTTP mode (basic-host)
 
-## Setup
+### Setup
 
 ```bash
 cd /path/to/darkwood-publish-article-mcp-apps
 composer install
 ```
 
-## Run the MCP server
+### Run the MCP server (single process: HTTP + Flow worker)
 
-Start the server on **http://localhost:3000** with the **router** so that `/mcp` is handled:
+Start the embedded HTTP server and Flow worker in one process (no `php -S`, no separate process manager):
 
 ```bash
-php -S localhost:3000 public/router.php
+php bin/flow-worker.php
 ```
 
-You should see:
+You should see on STDERR:
 
 ```
-PHP 8.x Development Server (http://localhost:3000) started
+MCP endpoint: http://127.0.0.1:3000/mcp
+Flow worker ticking every 100ms. Press Ctrl+C to stop.
 ```
 
-The MCP endpoint is: **http://localhost:3000/mcp**
+- **MCP endpoint:** **http://127.0.0.1:3000/mcp** (POST JSON-RPC)
+- **Demo flow:** `GET http://127.0.0.1:3000/flow/start?flow=hello_flow` enqueues a run; watch STDERR for `[Flow] tick` stats.
 
-> **Important:** Use `public/router.php` as the router script. If you run `php -S localhost:3000 -t public` without a router, requests to `/mcp` will not reach the handler.
-
-## Point basic-host to this server
+### Run basic-host (ext-apps)
 
 1. **Clone and build ext-apps** (if not already):
 
@@ -102,33 +102,32 @@ The MCP endpoint is: **http://localhost:3000/mcp**
    npm install
    ```
 
-2. **Configure basic-host** to use the PHP server. Default is `http://localhost:3000/mcp`. Either leave it or set:
+2. **Start the flow-worker** (in one terminal):
 
    ```bash
-   export SERVERS='["http://localhost:3000/mcp"]'
+   cd /path/to/darkwood-publish-article-mcp-apps
+   php bin/flow-worker.php
    ```
 
-3. **Start the examples server** (host on 8080, sandbox on 8081):
-
-   ```bash
-   cd /path/to/ext-apps
-   npm run examples:start
-   ```
-
-   Or run only basic-host (after building it):
+3. **Start basic-host** with the PHP server URL:
 
    ```bash
    cd /path/to/ext-apps/examples/basic-host
    npm run build
-   SERVERS='["http://localhost:3000/mcp"]' npx tsx serve.ts
+   SERVERS='["http://127.0.0.1:3000/mcp"]' npx tsx serve.ts
    ```
 
-4. **Open the host** in a browser: **http://localhost:8080**
+4. **Open** http://localhost:8080 in a browser.
 
-5. **Test the PHP server:**
-   - Select the server that shows **PHP MCP Apps MVP** (or the one pointing to `http://localhost:3000/mcp`).
-   - Pick the **hello_ui** tool and run it (default args `{}`).
-   - You should see the tool result and the minimal **Hello MCP App** UI in an iframe.
+5. **Test:** Select the server (e.g. **PHP MCP Apps MVP**), run the **hello_ui** tool with default args. You should see the tool result (text) and the **Hello MCP App** UI rendered in an iframe.
+
+**Alternative (legacy):** To use the PHP built-in web server instead of the flow-worker:
+
+```bash
+php -S localhost:3000 public/router.php
+```
+
+Then use `SERVERS='["http://localhost:3000/mcp"]'` when starting basic-host.
 
 ## Implemented JSON-RPC methods
 
@@ -149,11 +148,18 @@ darkwood-publish-article-mcp-apps/
 ├── package.json        # npm scripts: mcpb:init, mcpb:pack
 ├── composer.json
 ├── README.md
+├── bin/
+│   └── flow-worker.php # Entrypoint: embedded HTTP server + Flow tick loop
 ├── public/
-│   └── router.php      # Routes /mcp to MCP handler (HTTP mode)
+│   └── router.php      # Legacy: routes /mcp for php -S
+├── var/                # Flow SQLite (flow.sqlite), lock (flow.lock)
 └── src/
-    ├── McpServer.php       # MCP logic (HTTP mode)
-    └── JsonRpcHandler.php  # JSON-RPC parse + dispatch (HTTP mode)
+    ├── McpServer.php       # MCP logic (initialize, tools/list, tools/call, resources/list, resources/read)
+    ├── JsonRpcHandler.php  # JSON-RPC parse + dispatch
+    └── Flow/
+        ├── FlowEngine.php   # startRun, tick (minimal orchestration)
+        ├── RunRepository.php
+        └── Lock.php
 ```
 
 ## Spec reference
@@ -161,9 +167,10 @@ darkwood-publish-article-mcp-apps/
 - MCP Apps: `specification/2026-01-26/apps.mdx` in the ext-apps repo.
 - basic-host expects Streamable HTTP or SSE; this server responds to **POST /mcp** with a single JSON-RPC response body.
 
-## Pitfalls (stdio / JSON-RPC)
+## Pitfalls (stdio / JSON-RPC / basic-host)
 
 - **Stdio framing:** MCP stdio transport uses **newline-delimited JSON**: one JSON-RPC message per line. No `Content-Length` header; read until `\n`, decode, respond with one line.
 - **JSON-RPC `id`:** Requests must include `id`; responses must echo the same `id`. **Notifications** (e.g. `notifications/initialized`) have no `id` — do not send any response for them, or the client can get out of sync.
 - **Batch:** This server handles only single requests (or the first element of a batch). Full batch handling would require responding with an array of responses.
 - **PHP CLI:** When running as a subprocess, ensure PHP outputs only the JSON-RPC lines on stdout; use `stderr` for logs so the host does not mix them with messages.
+- **basic-host:** CORS is not required when the host is served from the same machine; the flow-worker listens on `127.0.0.1:3000`. Tool results use **content** (array of `{ type, text }`); **resources/read** uses **contents** (array of `{ uri, mimeType, text }`). Keep these shapes compatible with ext-apps/examples/basic-host.
