@@ -20,32 +20,15 @@ require_once $autoload;
 ini_set('display_errors', '0');
 ini_set('log_errors', '1');
 
-use Darkwood\Flow\FlowEngine;
-use Darkwood\Flow\Lock;
-use Darkwood\Flow\RunRepository;
 use Darkwood\Mcp\JsonRpcHandler;
 use Darkwood\Mcp\McpServer;
 use React\EventLoop\Loop;
 use React\Http\Message\Response;
 use React\Socket\SocketServer;
 use React\Http\HttpServer;
-
-$baseDir = dirname(__DIR__);
-$varDir = $baseDir . '/var';
-$dbPath = $varDir . '/flow.sqlite';
-$lockPath = $varDir . '/flow.lock';
-
-if (!is_dir($varDir)) {
-    mkdir($varDir, 0755, true);
-}
-
-$pdo = new PDO('sqlite:' . $dbPath, null, null, [
-    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-]);
-$repository = new RunRepository($pdo);
-$repository->init();
-$lock = new Lock($lockPath);
-$flowEngine = new FlowEngine($repository, $lock);
+use Flow\Driver\ReactDriver;
+use Flow\FlowFactory;
+use Flow\Ip;
 
 $mcpServer = new McpServer();
 $jsonRpcHandler = new JsonRpcHandler($mcpServer);
@@ -61,34 +44,15 @@ $responseWithCors = static function (int $status, array $headers, string $body) 
     return new Response($status, $corsHeaders + $headers, $body);
 };
 
-$httpHandler = function (Psr\Http\Message\ServerRequestInterface $request) use ($jsonRpcHandler, $flowEngine, $responseWithCors, $corsHeaders): Response {
+$httpHandler = function (Psr\Http\Message\ServerRequestInterface $request) use ($jsonRpcHandler, $responseWithCors, $corsHeaders): Response {
     try {
         $path = $request->getUri()->getPath();
         $method = strtoupper($request->getMethod());
 
         // CORS preflight: OPTIONS (browser sends this before GET/POST from another origin)
         if ($method === 'OPTIONS') {
-            if ($path === '/mcp' || $path === '/flow/start') {
+            if ($path === '/mcp') {
                 return new Response(204, $corsHeaders, '');
-            }
-        }
-
-        // Demo: GET /flow/start?flow=hello_flow to enqueue a run (see tick logs)
-        if ($path === '/flow/start' && $method === 'GET') {
-            $params = $request->getQueryParams();
-            $flowName = $params['flow'] ?? 'hello_flow';
-            try {
-                $run = $flowEngine->startRun($flowName, []);
-                return $responseWithCors(200, ['Content-Type' => 'application/json'], json_encode([
-                    'ok' => true,
-                    'run' => $run,
-                    'message' => 'Run enqueued; watch STDERR for [Flow] tick stats.',
-                ]));
-            } catch (\Throwable $e) {
-                return $responseWithCors(400, ['Content-Type' => 'application/json'], json_encode([
-                    'ok' => false,
-                    'error' => $e->getMessage(),
-                ]));
             }
         }
 
@@ -133,20 +97,25 @@ $http = new HttpServer($httpHandler);
 $socket = new SocketServer('127.0.0.1:' . $port);
 $http->listen($socket);
 
-$loop = Loop::get();
-$loop->addPeriodicTimer(0.1, function () use ($flowEngine): void {
-    $stats = $flowEngine->tick(10, 5000);
-    if ($stats['runs'] > 0 || $stats['processed'] > 0) {
-        file_put_contents('php://stderr', sprintf(
-            "[Flow] tick processed=%d runs=%d duration_ms=%.2f\n",
-            $stats['processed'],
-            $stats['runs'],
-            $stats['duration_ms']
-        ), FILE_APPEND);
-    }
-});
-
 file_put_contents('php://stderr', "MCP endpoint: http://127.0.0.1:{$port}/mcp\n", FILE_APPEND);
-file_put_contents('php://stderr', "Flow worker ticking every 100ms. Press Ctrl+C to stop.\n", FILE_APPEND);
 
-$loop->run();
+$driver = new ReactDriver(Loop::get());
+printf("Use %s\n", $driver::class);
+
+$addOneJob = static function ($data) use ($driver) {
+    printf("Client %d\n", $data);
+
+    return $data;
+};
+
+$flow = (new FlowFactory())->create(static function () use (
+    $addOneJob,
+) {
+    yield $addOneJob;
+}, ['driver' => $driver]);
+$flow(new Ip(1));
+
+$driver->tick(1000, function() {
+    //printf("coucou\n");
+});
+$flow->await();
