@@ -1,0 +1,11 @@
+node_modules
+package-lock.json
+.git
+vendor
+src
+public
+docs
+composer.json
+composer.lock
+*.md
+!README.md

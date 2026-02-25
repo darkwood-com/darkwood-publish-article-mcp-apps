@@ -1,0 +1,13 @@
+{
+  "name": "darkwood-php-mcp-apps",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PHP MCP server with MCP Apps, packaged as Claude Desktop extension (.mcpb)",
+  "scripts": {
+    "mcpb:init": "npx mcpb init",
+    "mcpb:pack": "npx mcpb pack"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.0.0"
+  }
+}

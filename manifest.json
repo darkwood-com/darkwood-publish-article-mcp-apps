@@ -1,0 +1,22 @@
+{
+  "manifest_version": "0.3",
+  "name": "darkwood-php-mcp-apps",
+  "display_name": "PHP MCP Apps (Hello UI)",
+  "version": "1.0.0",
+  "description": "Minimal PHP MCP server with MCP Apps: hello_ui tool and ui://darkwood/hello UI. Requires PHP installed.",
+  "author": {
+    "name": "Darkwood"
+  },
+  "server": {
+    "type": "binary",
+    "entry_point": "server.php",
+    "mcp_config": {
+      "command": "php",
+      "args": ["${__dirname}/server.php"]
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=1.0.0",
+    "platforms": ["darwin", "win32", "linux"]
+  }
+}
