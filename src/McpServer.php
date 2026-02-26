@@ -13,7 +13,8 @@ final class McpServer
     private const PROTOCOL_VERSION = '2024-11-05';
     private const SERVER_NAME = 'PHP MCP Apps MVP';
     private const SERVER_VERSION = '1.0.0';
-    private const UI_RESOURCE_URI = 'ui://darkwood/hello';
+    private const UI_RESOURCE_URI_HELLO = 'ui://darkwood/hello';
+    private const UI_RESOURCE_URI_ARTICLE = 'ui://darkwood/article';
     private const RESOURCE_MIME_TYPE = 'text/html;profile=mcp-app';
 
     public function handleRequest(array $request): array
@@ -85,6 +86,22 @@ final class McpServer
                         ],
                     ],
                 ],
+                [
+                    'name' => 'GenerateDraft',
+                    'description' => 'Generate an article draft from a topic',
+                    'inputSchema' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'topic' => ['type' => 'string', 'description' => 'Topic for the draft'],
+                        ],
+                        'required' => ['topic'],
+                    ],
+                    '_meta' => [
+                        'ui' => [
+                            'resourceUri' => 'ui://darkwood/article',
+                        ],
+                    ],
+                ],
             ],
         ];
     }
@@ -94,17 +111,40 @@ final class McpServer
         $name = $params['name'] ?? '';
         $arguments = $params['arguments'] ?? [];
 
-        if ($name !== 'hello_ui') {
-            throw new \InvalidArgumentException("Unknown tool: {$name}");
+        if ($name === 'hello_ui') {
+            $text = 'Hello from PHP MCP Server UI Display';
+            return [
+                'content' => [
+                    ['type' => 'text', 'text' => $text],
+                ],
+                'structuredContent' => (object)[],
+            ];
         }
 
-        $text = 'Hello from PHP MCP Server UI Display';
-        return [
-            'content' => [
-                ['type' => 'text', 'text' => $text],
-            ],
-            'structuredContent' => (object)[],
-        ];
+        if ($name === 'GenerateDraft') {
+            $topic = $arguments['topic'] ?? '';
+            $topic = is_string($topic) ? trim($topic) : '';
+            $draft = $this->generateDraft($topic);
+            return [
+                'content' => [
+                    ['type' => 'text', 'text' => $draft],
+                ],
+                'structuredContent' => (object)[],
+            ];
+        }
+
+        throw new \InvalidArgumentException("Unknown tool: {$name}");
+    }
+
+    /** Dummy draft generator; returns template text based on topic. */
+    private function generateDraft(string $topic): string
+    {
+        if ($topic === '') {
+            return '(No topic provided. Enter a topic and click Generate draft.)';
+        }
+        return "Draft for topic: \"{$topic}\"\n\n"
+            . "This is a placeholder draft. Replace with real generation later.\n\n"
+            . "— PHP MCP Server";
     }
 
     private function resourcesList(): array
@@ -117,6 +157,12 @@ final class McpServer
                     'description' => 'Minimal MCP App UI for hello_ui',
                     'mimeType' => 'text/html;profile=mcp-app',
                 ],
+                [
+                    'uri' => 'ui://darkwood/article',
+                    'name' => 'article',
+                    'description' => 'Article draft UI: enter topic and call GenerateDraft',
+                    'mimeType' => 'text/html;profile=mcp-app',
+                ],
             ],
         ];
     }
@@ -125,25 +171,43 @@ final class McpServer
     {
         $uri = $params['uri'] ?? '';
 
-        if ($uri !== self::UI_RESOURCE_URI) {
-            throw new \InvalidArgumentException("Unknown resource: {$uri}");
-        }
-
-        $html = $this->getHelloHtml();
-        return [
-            'contents' => [
-                [
-                    'uri' => 'ui://darkwood/hello',
-                    'mimeType' => 'text/html;profile=mcp-app',
-                    'text' => $html,
-                    '_meta' => [
-                        'ui' => [
-                            'prefersBorder' => true,
+        if ($uri === self::UI_RESOURCE_URI_HELLO) {
+            $html = $this->getHelloHtml();
+            return [
+                'contents' => [
+                    [
+                        'uri' => self::UI_RESOURCE_URI_HELLO,
+                        'mimeType' => self::RESOURCE_MIME_TYPE,
+                        'text' => $html,
+                        '_meta' => [
+                            'ui' => [
+                                'prefersBorder' => true,
+                            ],
                         ],
                     ],
                 ],
-            ],
-        ];
+            ];
+        }
+
+        if ($uri === self::UI_RESOURCE_URI_ARTICLE) {
+            $html = $this->getArticleHtml();
+            return [
+                'contents' => [
+                    [
+                        'uri' => self::UI_RESOURCE_URI_ARTICLE,
+                        'mimeType' => self::RESOURCE_MIME_TYPE,
+                        'text' => $html,
+                        '_meta' => [
+                            'ui' => [
+                                'prefersBorder' => true,
+                            ],
+                        ],
+                    ],
+                ],
+            ];
+        }
+
+        throw new \InvalidArgumentException("Unknown resource: {$uri}");
     }
 
     private function getHelloHtml(): string
@@ -214,6 +278,108 @@ final class McpServer
       appCapabilities: {},
       protocolVersion: PROTOCOL_VERSION
     }
+  });
+})();
+  </script>
+</body>
+</html>
+HTML;
+    }
+
+    private function getArticleHtml(): string
+    {
+        return <<<'HTML'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Article Draft</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 1rem; margin: 0; }
+    h1 { font-size: 1.25rem; margin: 0 0 0.5rem 0; }
+    #topic { width: 100%; min-height: 4rem; padding: 0.5rem; box-sizing: border-box; margin: 0.5rem 0; }
+    button { padding: 0.5rem 1rem; cursor: pointer; }
+    #output { white-space: pre-wrap; margin: 0.5rem 0 0; padding: 0.5rem; background: #f5f5f5; border-radius: 4px; font-size: 0.875rem; min-height: 2rem; }
+  </style>
+</head>
+<body>
+  <h1>Article Draft</h1>
+  <textarea id="topic" placeholder="Enter topic…"></textarea>
+  <br>
+  <button type="button" id="generateBtn">Generate draft</button>
+  <pre id="output"></pre>
+  <script>
+(function () {
+  var PROTOCOL_VERSION = '2026-01-26';
+  var topicEl = document.getElementById('topic');
+  var outputEl = document.getElementById('output');
+  var btnEl = document.getElementById('generateBtn');
+  var target = window.parent;
+  var initId = 1;
+  var callId = 2;
+  var pending = {};
+
+  function send(msg) {
+    target.postMessage(msg, '*');
+  }
+
+  function onMessage(ev) {
+    if (ev.source !== target) return;
+    var data = ev.data;
+    if (!data || data.jsonrpc !== '2.0') return;
+    if (data.id != null && pending[data.id]) {
+      pending[data.id](data.error ? new Error(data.error.message || 'Request failed') : null, data.result, data.error);
+      delete pending[data.id];
+    }
+  }
+
+  window.addEventListener('message', onMessage);
+
+  pending[initId] = function (err, result, rpcError) {
+    if (err || rpcError) {
+      outputEl.textContent = 'Initialize failed: ' + (err ? err.message : (rpcError && rpcError.message) || String(rpcError));
+      return;
+    }
+    send({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
+  };
+
+  send({
+    jsonrpc: '2.0',
+    id: initId,
+    method: 'ui/initialize',
+    params: {
+      appInfo: { name: 'Article Draft', version: '1.0.0' },
+      appCapabilities: {},
+      protocolVersion: PROTOCOL_VERSION
+    }
+  });
+
+  btnEl.addEventListener('click', function () {
+    var topic = (topicEl.value || '').trim();
+    var id = callId++;
+    outputEl.textContent = 'Generating…';
+    pending[id] = function (err, result, rpcError) {
+      if (err || rpcError) {
+        outputEl.textContent = 'Error: ' + (rpcError && rpcError.message ? rpcError.message : (err ? err.message : JSON.stringify(rpcError || err)));
+        return;
+      }
+      var text = '';
+      // Tool result shape: result.content[0].text (single text item)
+      if (result && result.content && Array.isArray(result.content) && result.content[0]) {
+        text = result.content[0].type === 'text' ? result.content[0].text : JSON.stringify(result.content[0]);
+      }
+      outputEl.textContent = text || '(empty result)';
+    };
+    send({
+      jsonrpc: '2.0',
+      id: id,
+      method: 'tools/call',
+      params: {
+        name: 'GenerateDraft',
+        arguments: { topic: topic }
+      }
+    });
   });
 })();
   </script>

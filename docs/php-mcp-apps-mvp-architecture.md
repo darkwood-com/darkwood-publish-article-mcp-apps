@@ -88,6 +88,8 @@ So the UI talks to the host only via this JSON-RPC/postMessage channel; it never
 
 End-to-end: **UI → (postMessage) → Host → (HTTP MCP) → PHP Server → response back along the same path.**
 
+**Tool result shape:** The host returns the server’s `CallToolResult` to the UI. The generated text is in **`result.content[0].text`** (single text item; `content` is an array of `{ type, text }`).
+
 ---
 
 ## 3. References
@@ -96,4 +98,4 @@ End-to-end: **UI → (postMessage) → Host → (HTTP MCP) → PHP Server → re
 - **basic-host:** reference host in `examples/basic-host` (loads UI via **resources/read**, sandbox proxy, AppBridge, and forwards **tools/call** from the UI to the MCP server).
 - **Lifecycle:** Connection & discovery → UI initialization (including sandbox and **ui/initialize**) → tool-input / tool-result → interactive phase (UI-originated **tools/call**, **resources/read**, etc.) → **ui/resource-teardown** on cleanup.
 
-This minimal MVP flow is enough to implement a PHP MCP server that serves a single UI resource (`ui://darkwood/hello`) and works with basic-host end-to-end.
+This minimal MVP flow is enough to implement a PHP MCP server that serves UI resources (`ui://darkwood/hello`, `ui://darkwood/article`) and works with basic-host end-to-end. The article UI calls `GenerateDraft` via `tools/call` and displays `result.content[0].text` in the output area.
