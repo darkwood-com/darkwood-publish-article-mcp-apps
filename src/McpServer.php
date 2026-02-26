@@ -102,6 +102,42 @@ final class McpServer
                         ],
                     ],
                 ],
+                [
+                    'name' => 'PublishDraft',
+                    'description' => 'Publish the draft (topic + draft + optional notes)',
+                    'inputSchema' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'topic' => ['type' => 'string', 'description' => 'Topic of the article'],
+                            'draft' => ['type' => 'string', 'description' => 'Draft text to publish'],
+                            'notes' => ['type' => 'string', 'description' => 'Optional feedback or approval notes'],
+                        ],
+                        'required' => ['topic', 'draft'],
+                    ],
+                    '_meta' => [
+                        'ui' => [
+                            'resourceUri' => 'ui://darkwood/article',
+                        ],
+                    ],
+                ],
+                [
+                    'name' => 'RequestChanges',
+                    'description' => 'Request changes to the draft (placeholder for correction loop)',
+                    'inputSchema' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'topic' => ['type' => 'string', 'description' => 'Topic of the article'],
+                            'draft' => ['type' => 'string', 'description' => 'Current draft text'],
+                            'notes' => ['type' => 'string', 'description' => 'Optional feedback or correction notes'],
+                        ],
+                        'required' => ['topic', 'draft'],
+                    ],
+                    '_meta' => [
+                        'ui' => [
+                            'resourceUri' => 'ui://darkwood/article',
+                        ],
+                    ],
+                ],
             ],
         ];
     }
@@ -128,6 +164,39 @@ final class McpServer
             return [
                 'content' => [
                     ['type' => 'text', 'text' => $draft],
+                ],
+                'structuredContent' => (object)[],
+            ];
+        }
+
+        if ($name === 'PublishDraft') {
+            $topic = $arguments['topic'] ?? '';
+            $draft = $arguments['draft'] ?? '';
+            $notes = $arguments['notes'] ?? '';
+            $topic = is_string($topic) ? trim($topic) : '';
+            $draft = is_string($draft) ? $draft : '';
+            $notes = is_string($notes) ? $notes : '';
+            $publishedUrl = 'https://example.com/articles/' . preg_replace('/[^a-z0-9-]/', '-', strtolower($topic)) . '-' . substr(md5($draft), 0, 8);
+            $text = "Published successfully.\n\npublishedUrl: " . $publishedUrl . "\n\n(MVP: no actual publish; URL is fake.)";
+            return [
+                'content' => [
+                    ['type' => 'text', 'text' => $text],
+                ],
+                'structuredContent' => (object)['publishedUrl' => $publishedUrl, 'done' => true],
+            ];
+        }
+
+        if ($name === 'RequestChanges') {
+            $topic = $arguments['topic'] ?? '';
+            $draft = $arguments['draft'] ?? '';
+            $notes = $arguments['notes'] ?? '';
+            $topic = is_string($topic) ? trim($topic) : '';
+            $draft = is_string($draft) ? $draft : '';
+            $notes = is_string($notes) ? $notes : '';
+            $text = "Changes requested. Your notes have been recorded. (Next step will be implemented later.)";
+            return [
+                'content' => [
+                    ['type' => 'text', 'text' => $text],
                 ],
                 'structuredContent' => (object)[],
             ];
@@ -296,25 +365,47 @@ HTML;
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Article Draft</title>
   <style>
-    body { font-family: system-ui, sans-serif; padding: 1rem; margin: 0; }
+    body { font-family: system-ui, sans-serif; padding: 1rem; margin: 0; max-width: 48rem; }
     h1 { font-size: 1.25rem; margin: 0 0 0.5rem 0; }
-    #topic { width: 100%; min-height: 4rem; padding: 0.5rem; box-sizing: border-box; margin: 0.5rem 0; }
-    button { padding: 0.5rem 1rem; cursor: pointer; }
-    #output { white-space: pre-wrap; margin: 0.5rem 0 0; padding: 0.5rem; background: #f5f5f5; border-radius: 4px; font-size: 0.875rem; min-height: 2rem; }
+    label { display: block; font-weight: 600; margin: 0.75rem 0 0.25rem 0; font-size: 0.875rem; }
+    textarea { width: 100%; min-height: 3rem; padding: 0.5rem; box-sizing: border-box; margin: 0; font-size: 0.875rem; }
+    #draft { min-height: 8rem; }
+    #notes { min-height: 4rem; }
+    .buttons { margin: 0.75rem 0; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    button { padding: 0.5rem 1rem; cursor: pointer; font-size: 0.875rem; }
+    button:disabled { cursor: not-allowed; opacity: 0.7; }
+    #error { color: #c00; background: #fee; padding: 0.5rem; border-radius: 4px; margin: 0.5rem 0; font-size: 0.875rem; min-height: 1.5rem; }
+    #message { color: #070; background: #efe; padding: 0.5rem; border-radius: 4px; margin: 0.5rem 0; font-size: 0.875rem; min-height: 1.5rem; white-space: pre-wrap; }
   </style>
 </head>
 <body>
   <h1>Article Draft</h1>
+  <label for="topic">Topic</label>
   <textarea id="topic" placeholder="Enter topic…"></textarea>
-  <br>
-  <button type="button" id="generateBtn">Generate draft</button>
-  <pre id="output"></pre>
+  <div class="buttons">
+    <button type="button" id="generateBtn">Generate draft</button>
+  </div>
+  <label for="draft">Draft</label>
+  <textarea id="draft" placeholder="(Generate a draft first or paste your own)"></textarea>
+  <label for="notes">Feedback / Notes</label>
+  <textarea id="notes" placeholder="Corrections or approval rationale…"></textarea>
+  <div class="buttons">
+    <button type="button" id="publishBtn" disabled>Publish</button>
+    <button type="button" id="correctBtn" disabled>Correct</button>
+  </div>
+  <div id="error" role="alert" aria-live="polite"></div>
+  <div id="message"></div>
   <script>
 (function () {
   var PROTOCOL_VERSION = '2026-01-26';
   var topicEl = document.getElementById('topic');
-  var outputEl = document.getElementById('output');
-  var btnEl = document.getElementById('generateBtn');
+  var draftEl = document.getElementById('draft');
+  var notesEl = document.getElementById('notes');
+  var generateBtn = document.getElementById('generateBtn');
+  var publishBtn = document.getElementById('publishBtn');
+  var correctBtn = document.getElementById('correctBtn');
+  var errorEl = document.getElementById('error');
+  var messageEl = document.getElementById('message');
   var target = window.parent;
   var initId = 1;
   var callId = 2;
@@ -322,6 +413,31 @@ HTML;
 
   function send(msg) {
     target.postMessage(msg, '*');
+  }
+
+  function clearFeedback() {
+    errorEl.textContent = '';
+    messageEl.textContent = '';
+  }
+
+  function showError(msg) {
+    errorEl.textContent = msg;
+    messageEl.textContent = '';
+  }
+
+  function showMessage(msg) {
+    errorEl.textContent = '';
+    messageEl.textContent = msg;
+  }
+
+  function setActionsEnabled(enabled) {
+    publishBtn.disabled = !enabled;
+    correctBtn.disabled = !enabled;
+  }
+
+  function getResultText(result) {
+    if (!result || !result.content || !Array.isArray(result.content) || !result.content[0]) return '';
+    return result.content[0].type === 'text' ? result.content[0].text : JSON.stringify(result.content[0]);
   }
 
   function onMessage(ev) {
@@ -338,7 +454,7 @@ HTML;
 
   pending[initId] = function (err, result, rpcError) {
     if (err || rpcError) {
-      outputEl.textContent = 'Initialize failed: ' + (err ? err.message : (rpcError && rpcError.message) || String(rpcError));
+      showError('Initialize failed: ' + (err ? err.message : (rpcError && rpcError.message) || String(rpcError)));
       return;
     }
     send({ jsonrpc: '2.0', method: 'ui/notifications/initialized' });
@@ -355,31 +471,81 @@ HTML;
     }
   });
 
-  btnEl.addEventListener('click', function () {
+  generateBtn.addEventListener('click', function () {
     var topic = (topicEl.value || '').trim();
+    clearFeedback();
     var id = callId++;
-    outputEl.textContent = 'Generating…';
+    showMessage('Generating…');
     pending[id] = function (err, result, rpcError) {
       if (err || rpcError) {
-        outputEl.textContent = 'Error: ' + (rpcError && rpcError.message ? rpcError.message : (err ? err.message : JSON.stringify(rpcError || err)));
+        showError('Error: ' + (rpcError && rpcError.message ? rpcError.message : (err ? err.message : String(rpcError || err))));
         return;
       }
-      var text = '';
-      // Tool result shape: result.content[0].text (single text item)
-      if (result && result.content && Array.isArray(result.content) && result.content[0]) {
-        text = result.content[0].type === 'text' ? result.content[0].text : JSON.stringify(result.content[0]);
-      }
-      outputEl.textContent = text || '(empty result)';
+      var text = getResultText(result);
+      draftEl.value = text || '';
+      setActionsEnabled(!!draftEl.value.trim());
+      showMessage('');
     };
     send({
       jsonrpc: '2.0',
       id: id,
       method: 'tools/call',
-      params: {
-        name: 'GenerateDraft',
-        arguments: { topic: topic }
-      }
+      params: { name: 'GenerateDraft', arguments: { topic: topic } }
     });
+  });
+
+  function doPublish() {
+    var topic = (topicEl.value || '').trim();
+    var draft = (draftEl.value || '').trim();
+    var notes = (notesEl.value || '').trim();
+    clearFeedback();
+    var id = callId++;
+    showMessage('Publishing…');
+    pending[id] = function (err, result, rpcError) {
+      if (err || rpcError) {
+        showError('Error: ' + (rpcError && rpcError.message ? rpcError.message : (err ? err.message : String(rpcError || err))));
+        return;
+      }
+      var text = getResultText(result);
+      var st = result && result.structuredContent ? result.structuredContent : {};
+      var url = st.publishedUrl || (st.done ? 'done' : '');
+      showMessage(text + (url ? '\n\npublishedUrl: ' + url : ''));
+    };
+    send({
+      jsonrpc: '2.0',
+      id: id,
+      method: 'tools/call',
+      params: { name: 'PublishDraft', arguments: { topic: topic, draft: draft, notes: notes } }
+    });
+  }
+
+  function doCorrect() {
+    var topic = (topicEl.value || '').trim();
+    var draft = (draftEl.value || '').trim();
+    var notes = (notesEl.value || '').trim();
+    clearFeedback();
+    var id = callId++;
+    showMessage('Requesting changes…');
+    pending[id] = function (err, result, rpcError) {
+      if (err || rpcError) {
+        showError('Error: ' + (rpcError && rpcError.message ? rpcError.message : (err ? err.message : String(rpcError || err))));
+        return;
+      }
+      showMessage('Changes requested (next step will be implemented later).');
+    };
+    send({
+      jsonrpc: '2.0',
+      id: id,
+      method: 'tools/call',
+      params: { name: 'RequestChanges', arguments: { topic: topic, draft: draft, notes: notes } }
+    });
+  }
+
+  publishBtn.addEventListener('click', doPublish);
+  correctBtn.addEventListener('click', doCorrect);
+
+  draftEl.addEventListener('input', function () {
+    setActionsEnabled(!!draftEl.value.trim());
   });
 })();
   </script>
