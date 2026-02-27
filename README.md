@@ -35,7 +35,10 @@ Use this to generate or adjust `manifest.json`. The repo already includes a vali
 
 ### 3. Pack the extension
 
+Install PHP dependencies so `vendor/` and `src/` are included in the bundle (required for the server to run when installed):
+
 ```bash
+composer install --no-dev
 npm run mcpb:pack
 ```
 
@@ -62,6 +65,46 @@ This produces a `.mcpb` file in the project directory (e.g. `darkwood-php-mcp-ap
 4. You should see the tool result and a small **Hello MCP App from PHP** UI rendered in the conversation (if the client supports MCP Apps).
 
 **Note:** The .mcpb runs the server via **stdio** (`php server.php`). PHP must be installed and on your `PATH` where Claude Desktop runs.
+
+### Stdio transport (how it works)
+
+`server.php` uses **line-delimited JSON-RPC** on STDIN/STDOUT:
+
+- **STDIN:** One JSON-RPC request per line (single object or batch array; batch MVP: first element only).
+- **STDOUT:** One JSON-RPC response per line. **Nothing else** must be written to STDOUT (or the host will see invalid messages).
+- **STDERR:** Logs and diagnostics only. Safe for debugging.
+
+The same process runs the Flow engine (React event loop) and the MCP handler: when STDIN is readable, requests are read, dispatched via `McpServer`, and responses written to STDOUT; the Flow tick runs periodically in the same loop. Suitable for Claude Desktop extension packaging (e.g. `npx mcpb pack`); stdio mode uses no HTTP.
+
+### Manual test (stdio)
+
+Send one JSON-RPC request and capture the response (server runs until you kill it or close STDIN):
+
+```bash
+# In one terminal, start the server (it will wait for input):
+php server.php
+
+# In another, send a request (e.g. with netcat or a pipe). Example:
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | php server.php 2>/dev/null &
+sleep 1
+kill %1 2>/dev/null
+# You should see one line on stdout: the initialize result.
+```
+
+Or run and type one line then Ctrl+D:
+
+```bash
+php server.php
+# Type: {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+# Press Enter. Response appears on the next line. Ctrl+C to stop.
+```
+
+### Pitfalls (stdio)
+
+- **Never print to STDOUT** except the exact JSON-RPC response lines (one JSON object per line, no extra whitespace or debug output). Any extra byte breaks the protocol.
+- **Log only to STDERR** (`fwrite(STDERR, ...)` or `file_put_contents('php://stderr', ...)`).
+- **Notifications** (e.g. `ui/notifications/initialized`) have no `id` — do not send a response.
+- **Batch:** This server handles a single request per line; if the line is a batch array, only the first element is handled and one response is written.
 
 ---
 
@@ -134,10 +177,10 @@ Then use `SERVERS='["http://localhost:3000/mcp"]'` when starting basic-host.
 | Method             | Description |
 |--------------------|-------------|
 | `initialize`       | Returns `protocolVersion`, `capabilities` (tools, resources, `io.modelcontextprotocol/ui`), `serverInfo`. |
-| `tools/list`       | Returns one tool: `hello_ui` with `_meta.ui.resourceUri = "ui://darkwood/hello"`. |
-| `tools/call`       | For `name === "hello_ui"` returns text: "Hello from PHP MCP Server". |
-| `resources/list`   | Returns one resource: `ui://darkwood/hello`. |
-| `resources/read`   | For `uri === "ui://darkwood/hello"` returns HTML with mimeType `text/html;profile=mcp-app`. |
+| `tools/list`       | Returns tools: `hello_ui`, `GenerateDraft`, `PublishDraft`, `RequestChanges` (with `_meta.ui.resourceUri` for app UIs). |
+| `tools/call`       | Returns `content` (array of `{ type, text }`); supports hello_ui, GenerateDraft, PublishDraft, RequestChanges. |
+| `resources/list`   | Returns resources: `ui://darkwood/hello`, `ui://darkwood/article`. |
+| `resources/read`   | Returns `contents` with `text/html;profile=mcp-app` for the requested URI (hello or article app HTML). |
 
 ## Project layout
 
@@ -155,7 +198,8 @@ darkwood-publish-article-mcp-apps/
 ├── var/                # Flow SQLite (flow.sqlite), lock (flow.lock)
 └── src/
     ├── McpServer.php       # MCP logic (initialize, tools/list, tools/call, resources/list, resources/read)
-    ├── JsonRpcHandler.php  # JSON-RPC parse + dispatch
+    ├── JsonRpcHandler.php  # JSON-RPC parse + dispatch (handle for HTTP, handleParsedRequest for stdio)
+    ├── StdioTransport.php  # Stdio JSON-RPC: read line-delimited from STDIN, write to STDOUT, log to STDERR
     └── Flow/
         ├── FlowEngine.php   # startRun, tick (minimal orchestration)
         ├── RunRepository.php

@@ -68,4 +68,24 @@ final class JsonRpcHandler
             ];
         }
     }
+
+    /**
+     * Handle an already-parsed JSON-RPC request (e.g. from stdio transport).
+     */
+    public function handleParsedRequest(array $request): array
+    {
+        try {
+            return $this->server->handleRequest($request);
+        } catch (\Throwable $e) {
+            $id = $request['id'] ?? null;
+            return [
+                'jsonrpc' => '2.0',
+                'id' => $id,
+                'error' => [
+                    'code' => -32603,
+                    'message' => 'Internal error: ' . $e->getMessage(),
+                ],
+            ];
+        }
+    }
 }

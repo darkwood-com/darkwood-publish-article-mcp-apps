@@ -4,7 +4,7 @@
 declare(strict_types=1);
 
 /**
- * Single long-running process: embedded HTTP server (MCP JSON-RPC on /mcp) + Flow worker tick loop.
+ * HTTP MCP server + Flow worker (single process). For stdio/Claude Desktop use server.php instead.
  * Run: php bin/flow-worker.php
  * MCP endpoint: http://127.0.0.1:3000/mcp
  */
