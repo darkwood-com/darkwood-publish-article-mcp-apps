@@ -1,220 +1,221 @@
 # PHP MCP Server — MCP Apps MVP
 
-Minimal PHP MCP server that supports the **MCP Apps** extension (2026-01-26). Two ways to run:
-
-1. **Claude Desktop extension (.mcpb)** — stdio transport; install the bundle and call `hello_ui` to see the UI in Claude.
-2. **HTTP + basic-host** — run the built-in PHP server and use [ext-apps](https://github.com/modelcontextprotocol/ext-apps) basic-host in a browser.
+Minimal PHP MCP server that supports the **MCP Apps** extension (2026-01-26). It can run over **stdio** or **HTTP** and is packaged as a **Claude Desktop extension** (.mcpb). The same server exposes tools (e.g. `hello_ui`, `GenerateDraft`, `PublishDraft`) with optional **embedded UI** (MCP App) for hosts that support it.
 
 ## Requirements
 
 - PHP 8.1+
-- For HTTP mode: Composer (autoload only)
-- For .mcpb: Node.js (for `npx mcpb pack` only)
+- Composer (for autoload and dependencies)
+- For packaging the Claude Desktop extension: Node.js (for `npx mcpb pack` only)
+
+---
+
+## Project overview
+
+This project is a single **MCP server** (PHP) that:
+
+- Exposes **tools** and **resources** (including `ui://` resources for MCP Apps).
+- Can be used via **stdio** (e.g. Claude Desktop) or **HTTP** (e.g. [ext-apps](https://github.com/modelcontextprotocol/ext-apps) basic-host, or a browser hitting an HTTP MCP endpoint).
+- Optionally runs an **HTTP endpoint** via the built-in flow-worker process or via **Symfony CLI** serving `public/index.php`.
+
+The same MCP logic and tools are used in all modes; only the **transport** (stdio vs HTTP) and **how the process is started** (standalone script vs web server) change.
+
+---
+
+## What MCP Apps add to this project
+
+MCP servers traditionally expose **tools** (and resources) that return text or structured data. The **MCP Apps** extension (spec: `specification/2026-01-26/apps.mdx` in the ext-apps repo) allows servers to attach an **interactive UI** to a tool:
+
+- The server declares a **tool** and links it to a **UI resource** via `_meta.ui.resourceUri` (a `ui://` URI).
+- When a host supports MCP Apps, it can **run the tool** and **fetch and render** that resource as an iframe (the “View”). The View communicates with the host over `postMessage` (JSON-RPC), not with the PHP server directly.
+- Compared to text-only tools, this gives **embedded UIs** (forms, previews, controls) next to the tool result in the conversation.
+
+In this project, the MCP App is used as a **tool enhanced with a UI**: e.g. `hello_ui` (demo) and article-related tools (`GenerateDraft`, `PublishDraft`, `RequestChanges`) each have an optional UI resource (`ui://darkwood/hello`, `ui://darkwood/article`). The host (e.g. basic-host or Claude Desktop, when it supports MCP Apps) shows both the tool result and the interactive View when available.
+
+---
+
+## Different usage modes of the MCP App
+
+The same MCP server is used in several ways:
+
+| Mode | Transport | Entry point | Typical use |
+|------|------------|-------------|-------------|
+| **Stdio** | STDIN/STDOUT (line-delimited JSON-RPC) | `php server.php` | Claude Desktop extension (.mcpb), local CLI clients |
+| **HTTP (flow-worker)** | HTTP POST /mcp | `php bin/flow-worker.php` | Single process: MCP endpoint + optional Flow tick; basic-host |
+| **HTTP (Symfony server)** | HTTP POST /mcp | `symfony serve` (document root: `public/`) | MCP endpoint served by Symfony CLI; no Flow worker in this process |
+| **Claude Desktop extension** | Stdio (under the hood) | Packaged as .mcpb, runs `php server.php` | Use the MCP App inside Claude / Claude Desktop |
+| **MCP App as tool with UI** | Any of the above | Depends on host | basic-host or any MCP Apps–capable host; tool call + UI resource rendered in iframe |
+
+### 1. Stdio
+
+- **Command:** `php server.php`
+- **Behaviour:** Listens on STDIN for line-delimited JSON-RPC requests; writes one JSON-RPC response per line to STDOUT. No HTTP. Same MCP + Flow wiring as the rest of the project; only the transport is stdio.
+- **Use case:** Claude Desktop extension (the .mcpb runs `php server.php`), or any client that talks MCP over stdio.
+
+### 2. HTTP (flow-worker)
+
+- **Command:** `php bin/flow-worker.php`
+- **Behaviour:** Starts an HTTP server (default: `http://127.0.0.1:3000`) and exposes **POST /mcp** for JSON-RPC. Same MCP handler as stdio; transport is HTTP. The process also runs a React event loop (e.g. for a periodic tick). Port can be overridden with `MCP_PORT`.
+- **Use case:** Running the MCP endpoint for [basic-host](https://github.com/modelcontextprotocol/ext-apps/tree/main/examples/basic-host) or other HTTP MCP clients without a separate web server.
+
+### 3. Symfony server
+
+- **Command:** `symfony serve` (with document root pointing at `public/`, e.g. `public` or `public/`).
+- **Behaviour:** Serves the app via Symfony CLI; **POST /mcp** is handled by `public/index.php`. Same MCP logic as flow-worker and server.php; no Flow worker loop in this process. Each request is a separate PHP run (classic request/response).
+- **Use case:** Local development or deployment where you want a standard web server in front of `public/index.php` instead of the embedded flow-worker.
+
+**Alternative (no Symfony CLI):** `php -S localhost:3000 public/index.php` — PHP built-in server, same MCP endpoint.
+
+### 4. Claude Desktop extension
+
+- **How:** Package the project as a .mcpb (see [Claude Desktop extension (.mcpb)](#claude-desktop-extension-mcpb) below). The manifest runs the server via **stdio** (`php server.php`).
+- **Behaviour:** Claude Desktop starts the server as a subprocess and communicates over STDIN/STDOUT. Users see the extension’s tools (e.g. `hello_ui`) and, when the client supports MCP Apps, the embedded UI.
+- **Use case:** Using this MCP App directly inside Claude / Claude Desktop without running a separate HTTP server.
+
+### 5. MCP App as tool with embedded UI
+
+- **How:** Use any of the above (stdio or HTTP) with an **MCP Apps–capable host** (e.g. ext-apps basic-host, or Claude when it supports MCP Apps). The host calls the tool and, using `_meta.ui.resourceUri`, fetches the UI resource and renders it in an iframe.
+- **Behaviour:** Tool result (text/content) plus interactive View; the View can call back to the server via the host’s MCP client (e.g. `tools/call` forwarded by the host).
+
+---
+
+## Transport and orchestration differences
+
+- **Stdio and HTTP (flow-worker):** A single long-lived process. Async capabilities (e.g. React event loop) can be used; the flow-worker runs a tick loop in the same process as the MCP HTTP handler. For stdio, the same process handles both STDIN reads and any periodic work.
+- **Symfony server (or `php -S` with `public/index.php`):** Each HTTP request is a new PHP process (or request). The model is **synchronous** per request; there is no in-process Flow worker. Orchestration of multi-step workflows (e.g. article flows) is intended to be handled by **Flow** when running under flow-worker or by external scheduling when using Symfony server.
+- **Claude Desktop (stdio):** One subprocess per session; no HTTP. All MCP traffic is on STDIN/STDOUT.
+
+**Summary:** Use **flow-worker** when you want one process for MCP + optional Flow tick; use **Symfony server** (or PHP built-in) when you want a standard HTTP stack and may rely on external orchestration or separate workers.
+
+---
+
+## High-level architecture
+
+- **MCP host** (e.g. basic-host, Claude Desktop): Connects to the MCP server (stdio or HTTP), lists tools/resources, calls tools, and for MCP Apps fetches UI resources and renders them in an iframe.
+- **MCP App UI (View):** HTML/JS loaded from `resources/read` for `ui://` URIs; runs in the host’s iframe; talks to the host via `postMessage` (JSON-RPC), not to the PHP server directly.
+- **PHP MCP server:** This project. Handles `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`; serves tool implementations and UI resource contents.
+- **Flow:** Optional orchestration layer (used when running under flow-worker) for multi-step workflows.
+
+A detailed sequence diagram and protocol flow are in [docs/php-mcp-apps-mvp-architecture.md](docs/php-mcp-apps-mvp-architecture.md).
+
+---
+
+## Useful run commands
+
+```bash
+# Install PHP dependencies
+composer install
+
+# --- Stdio (e.g. for manual testing or .mcpb) ---
+php server.php
+
+# --- HTTP: single process with MCP endpoint ---
+php bin/flow-worker.php
+# MCP endpoint: http://127.0.0.1:3000/mcp (or set MCP_PORT)
+
+# --- HTTP: Symfony server (document root = public/) ---
+symfony serve
+# Then POST /mcp to the URL Symfony prints (e.g. http://127.0.0.1:8000/mcp)
+
+# --- HTTP: PHP built-in server ---
+php -S localhost:3000 public/index.php
+# MCP endpoint: http://localhost:3000/mcp
+
+# --- Claude Desktop extension: pack .mcpb ---
+composer install --no-dev
+npm run mcpb:pack
+# Install the generated .mcpb in Claude Desktop (Settings → Extensions → Install Extension)
+```
+
+**Using basic-host (ext-apps):** Start the MCP server (e.g. `php bin/flow-worker.php`), then from ext-apps: `SERVERS='["http://127.0.0.1:3000/mcp"]' npx tsx serve.ts` in `examples/basic-host`, and open http://localhost:8080.
+
 ---
 
 ## Claude Desktop extension (.mcpb)
 
-Package the server as an MCPB bundle and install it in Claude Desktop to get the **hello_ui** tool with MCP App UI rendering.
+Package the server as an MCPB bundle and install it in Claude Desktop to get tools (e.g. **hello_ui**) with MCP App UI when the client supports it.
 
-### 1. Install MCPB locally (no global install)
+### 1. Install MCPB (dev) and pack
 
 ```bash
 cd /path/to/darkwood-publish-article-mcp-apps
 npm install
-```
-
-This installs `@anthropic-ai/mcpb` as a dev dependency.
-
-### 2. Create or update manifest (optional)
-
-```bash
-npm run mcpb:init
-```
-
-Use this to generate or adjust `manifest.json`. The repo already includes a valid `manifest.json` for the PHP stdio server.
-
-### 3. Pack the extension
-
-Install PHP dependencies so `vendor/` and `src/` are included in the bundle (required for the server to run when installed):
-
-```bash
 composer install --no-dev
 npm run mcpb:pack
 ```
 
-Or with npx directly:
+This produces a `.mcpb` file (e.g. `darkwood-php-mcp-apps-1.0.0.mcpb`). The repo includes a valid `manifest.json` (server type: binary, entry: `server.php`, command: `php server.php`).
 
-```bash
-npx mcpb pack
-```
-
-This produces a `.mcpb` file in the project directory (e.g. `darkwood-php-mcp-apps-1.0.0.mcpb`).
-
-### 4. Install in Claude Desktop
+### 2. Install in Claude Desktop
 
 1. Open **Claude Desktop** (macOS or Windows).
 2. Go to **Settings → Extensions → Advanced → Install Extension**.
-3. Select the `.mcpb` file you created (or drag and drop it).
-4. Confirm installation; the extension will appear in your list.
+3. Select the `.mcpb` file (or drag and drop).
+4. Confirm; the extension appears in your list.
 
-### 5. Test MCP App UI
+### 3. Use the MCP App
 
-1. Start a conversation with Claude.
-2. Ensure the **PHP MCP Apps (Hello UI)** extension is enabled.
-3. Ask Claude to call the **hello_ui** tool (e.g. “Call the hello_ui tool”).
-4. You should see the tool result and a small **Hello MCP App from PHP** UI rendered in the conversation (if the client supports MCP Apps).
+1. Start a conversation; enable the **PHP MCP Apps (Hello UI)** extension.
+2. Ask Claude to call **hello_ui** (or another tool). You get the tool result and, if the client supports MCP Apps, the embedded UI.
 
-**Note:** The .mcpb runs the server via **stdio** (`php server.php`). PHP must be installed and on your `PATH` where Claude Desktop runs.
-
-### Stdio transport (how it works)
-
-`server.php` uses **line-delimited JSON-RPC** on STDIN/STDOUT:
-
-- **STDIN:** One JSON-RPC request per line (single object or batch array; batch MVP: first element only).
-- **STDOUT:** One JSON-RPC response per line. **Nothing else** must be written to STDOUT (or the host will see invalid messages).
-- **STDERR:** Logs and diagnostics only. Safe for debugging.
-
-The same process runs the Flow engine (React event loop) and the MCP handler: when STDIN is readable, requests are read, dispatched via `McpServer`, and responses written to STDOUT; the Flow tick runs periodically in the same loop. Suitable for Claude Desktop extension packaging (e.g. `npx mcpb pack`); stdio mode uses no HTTP.
-
-### Manual test (stdio)
-
-Send one JSON-RPC request and capture the response (server runs until you kill it or close STDIN):
-
-```bash
-# In one terminal, start the server (it will wait for input):
-php server.php
-
-# In another, send a request (e.g. with netcat or a pipe). Example:
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | php server.php 2>/dev/null &
-sleep 1
-kill %1 2>/dev/null
-# You should see one line on stdout: the initialize result.
-```
-
-Or run and type one line then Ctrl+D:
-
-```bash
-php server.php
-# Type: {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
-# Press Enter. Response appears on the next line. Ctrl+C to stop.
-```
-
-### Pitfalls (stdio)
-
-- **Never print to STDOUT** except the exact JSON-RPC response lines (one JSON object per line, no extra whitespace or debug output). Any extra byte breaks the protocol.
-- **Log only to STDERR** (`fwrite(STDERR, ...)` or `file_put_contents('php://stderr', ...)`).
-- **Notifications** (e.g. `ui/notifications/initialized`) have no `id` — do not send a response.
-- **Batch:** This server handles a single request per line; if the line is a batch array, only the first element is handled and one response is written.
+**Note:** The .mcpb runs the server via **stdio** (`php server.php`). PHP must be on your `PATH` where Claude Desktop runs.
 
 ---
 
-## HTTP mode (basic-host)
-
-### Setup
-
-```bash
-cd /path/to/darkwood-publish-article-mcp-apps
-composer install
-```
-
-### Run the MCP server (single process: HTTP + Flow worker)
-
-Start the embedded HTTP server and Flow worker in one process (no `php -S`, no separate process manager):
-
-```bash
-php bin/flow-worker.php
-```
-
-You should see on STDERR:
-
-```
-MCP endpoint: http://127.0.0.1:3000/mcp
-Flow worker ticking every 100ms. Press Ctrl+C to stop.
-```
-
-- **MCP endpoint:** **http://127.0.0.1:3000/mcp** (POST JSON-RPC)
-- **Demo flow:** `GET http://127.0.0.1:3000/flow/start?flow=hello_flow` enqueues a run; watch STDERR for `[Flow] tick` stats.
-
-### Run basic-host (ext-apps)
-
-1. **Clone and build ext-apps** (if not already):
-
-   ```bash
-   git clone https://github.com/modelcontextprotocol/ext-apps.git /path/to/ext-apps
-   cd /path/to/ext-apps
-   npm install
-   ```
-
-2. **Start the flow-worker** (in one terminal):
-
-   ```bash
-   cd /path/to/darkwood-publish-article-mcp-apps
-   php bin/flow-worker.php
-   ```
-
-3. **Start basic-host** with the PHP server URL:
-
-   ```bash
-   cd /path/to/ext-apps/examples/basic-host
-   npm run build
-   SERVERS='["http://127.0.0.1:3000/mcp"]' npx tsx serve.ts
-   ```
-
-4. **Open** http://localhost:8080 in a browser.
-
-5. **Test:** Select the server (e.g. **PHP MCP Apps MVP**), run the **hello_ui** tool with default args. You should see the tool result (text) and the **Hello MCP App** UI rendered in an iframe.
-
-**Alternative (legacy):** To use the PHP built-in web server instead of the flow-worker:
-
-```bash
-php -S localhost:3000 public/index.php
-```
-
-Then use `SERVERS='["http://localhost:3000/mcp"]'` when starting basic-host.
-
 ## Implemented JSON-RPC methods
 
-| Method             | Description |
-|--------------------|-------------|
-| `initialize`       | Returns `protocolVersion`, `capabilities` (tools, resources, `io.modelcontextprotocol/ui`), `serverInfo`. |
-| `tools/list`       | Returns tools: `hello_ui`, `GenerateDraft`, `PublishDraft`, `RequestChanges` (with `_meta.ui.resourceUri` for app UIs). |
-| `tools/call`       | Returns `content` (array of `{ type, text }`); supports hello_ui, GenerateDraft, PublishDraft, RequestChanges. |
-| `resources/list`   | Returns resources: `ui://darkwood/hello`, `ui://darkwood/article`. |
-| `resources/read`   | Returns `contents` with `text/html;profile=mcp-app` for the requested URI (hello or article app HTML). |
+| Method | Description |
+|--------|-------------|
+| `initialize` | Returns `protocolVersion`, `capabilities` (tools, resources, `io.modelcontextprotocol/ui`), `serverInfo`. |
+| `tools/list` | Returns tools: `hello_ui`, `GenerateDraft`, `PublishDraft`, `RequestChanges` (with `_meta.ui.resourceUri` for app UIs). |
+| `tools/call` | Returns `content` (array of `{ type, text }`); supports hello_ui, GenerateDraft, PublishDraft, RequestChanges. |
+| `resources/list` | Returns resources: `ui://darkwood/hello`, `ui://darkwood/article`. |
+| `resources/read` | Returns `contents` with `text/html;profile=mcp-app` for the requested URI (hello or article app HTML). |
+
+---
 
 ## Project layout
 
 ```
 darkwood-publish-article-mcp-apps/
 ├── manifest.json       # MCPB manifest (server.type=binary, php server.php)
-├── server.php          # Stdio MCP server (for .mcpb)
+├── server.php          # Stdio MCP server (for .mcpb and stdio clients)
 ├── package.json        # npm scripts: mcpb:init, mcpb:pack
 ├── composer.json
 ├── README.md
+├── docs/
+│   └── php-mcp-apps-mvp-architecture.md
 ├── bin/
-│   └── flow-worker.php # Entrypoint: embedded HTTP server + Flow tick loop
+│   └── flow-worker.php # HTTP MCP server + optional Flow tick (single process)
 ├── public/
-│   └── index.php       # HTTP front controller: POST /mcp (symfony serve or php -S)
+│   └── index.php       # HTTP front controller: POST /mcp (Symfony serve or php -S)
 ├── var/                # Flow SQLite (flow.sqlite), lock (flow.lock)
 └── src/
-    ├── McpServer.php       # MCP logic (initialize, tools/list, tools/call, resources/list, resources/read)
-    ├── JsonRpcHandler.php  # JSON-RPC parse + dispatch (handle for HTTP, handleParsedRequest for stdio)
-    ├── StdioTransport.php  # Stdio JSON-RPC: read line-delimited from STDIN, write to STDOUT, log to STDERR
-    └── Flow/
-        ├── FlowEngine.php   # startRun, tick (minimal orchestration)
-        ├── RunRepository.php
-        └── Lock.php
+    ├── Mcp/
+    │   ├── McpServer.php
+    │   ├── JsonRpcHandler.php
+    │   └── StdioTransport.php
+    ├── Flow/
+    │   ├── FlowEngine.php
+    │   ├── RunRepository.php
+    │   └── Lock.php
+    └── ...
 ```
+
+---
+
+## Current limitations and caveats
+
+- **Stdio:** Only one JSON-RPC request per line; if a line is a batch array, only the first element is handled. **Never** write anything but JSON-RPC response lines to STDOUT; use STDERR for logs.
+- **Notifications:** Notifications (e.g. `ui/notifications/initialized`) have no `id` — do not send a response for them.
+- **HTTP (this server):** POST /mcp returns a **single** JSON-RPC response body (no Streamable HTTP/SSE). basic-host may still connect; for full Streamable HTTP you would need a different transport.
+- **Symfony server:** No Flow worker in the same process; orchestration is synchronous per request or must be handled elsewhere.
+- **Claude Desktop:** MCP App UI rendering depends on Claude supporting the MCP Apps extension; tool results always work.
+- **Implemented today:** Stdio and HTTP transports; tools and UI resources; .mcpb packaging; basic-host compatibility; Flow integration in flow-worker. **Possible future:** Full batch JSON-RPC, Streamable HTTP transport, deeper editorial workflow docs.
+
+---
 
 ## Spec reference
 
-- MCP Apps: `specification/2026-01-26/apps.mdx` in the ext-apps repo.
-- basic-host expects Streamable HTTP or SSE; this server responds to **POST /mcp** with a single JSON-RPC response body.
-
-## Pitfalls (stdio / JSON-RPC / basic-host)
-
-- **Stdio framing:** MCP stdio transport uses **newline-delimited JSON**: one JSON-RPC message per line. No `Content-Length` header; read until `\n`, decode, respond with one line.
-- **JSON-RPC `id`:** Requests must include `id`; responses must echo the same `id`. **Notifications** (e.g. `notifications/initialized`) have no `id` — do not send any response for them, or the client can get out of sync.
-- **Batch:** This server handles only single requests (or the first element of a batch). Full batch handling would require responding with an array of responses.
-- **PHP CLI:** When running as a subprocess, ensure PHP outputs only the JSON-RPC lines on stdout; use `stderr` for logs so the host does not mix them with messages.
-- **basic-host:** CORS is not required when the host is served from the same machine; the flow-worker listens on `127.0.0.1:3000`. Tool results use **content** (array of `{ type, text }`); **resources/read** uses **contents** (array of `{ uri, mimeType, text }`). Keep these shapes compatible with ext-apps/examples/basic-host.
+- MCP Apps: `specification/2026-01-26/apps.mdx` in the [ext-apps](https://github.com/modelcontextprotocol/ext-apps) repo.
+- Quickstart (concept: tool + UI resource, View in iframe): [MCP Apps Quickstart](https://apps.extensions.modelcontextprotocol.io/api/documents/Quickstart.html).
