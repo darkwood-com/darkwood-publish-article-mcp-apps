@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\Bootstrap;
 
 use App\Flow\GenerateDraftFlow;
+use App\Flow\PublishDraftFlow;
 use App\Mcp\JsonRpcHandler;
 use App\Mcp\McpServer;
 use App\Model\GenerateDraftPayload;
+use App\Model\PublishDraftPayload;
 use Flow\Driver\FiberDriver;
 use Flow\FlowFactory;
 use Flow\Ip;
@@ -43,25 +45,43 @@ final class AppBootstrap
     }
 
     /**
-     * Creates the MCP server with Flow-backed GenerateDraft (same wiring as flow-worker).
+     * Creates the MCP server with a single Flow pipeline: GenerateDraftFlow then PublishDraftFlow.
+     * GenerateDraft pushes GenerateDraftPayload; AcceptDraft/RequestChanges push PublishDraftPayload.
      */
     public static function createMcpServer(): McpServer
     {
         $flowDriver = new FiberDriver();
         $generateDraftFlow = new GenerateDraftFlow($flowDriver);
-        $flow = (new FlowFactory())->create(static function () use ($generateDraftFlow) {
+        $publishDraftFlow = new PublishDraftFlow($flowDriver);
+
+        $flow = (new FlowFactory())->create(static function () use ($generateDraftFlow, $publishDraftFlow) {
             yield $generateDraftFlow;
+            yield $publishDraftFlow;
         }, ['driver' => $flowDriver]);
 
         $generateDraftRunner = static function (string $topic) use ($flow): string {
-            $payload = new GenerateDraftPayload($topic);
-            $flow(new Ip($payload));
+            $ip = new Ip(new GenerateDraftPayload($topic));
+            $flow($ip);
             $flow->await();
-            return $payload->getDraftText() ?? '';
+            $data = $ip->data;
+            return $data instanceof PublishDraftPayload
+                ? ($data->getDraftText() ?? '')
+                : ($data instanceof GenerateDraftPayload ? ($data->getDraftText() ?? '') : '');
+        };
+
+        $publishDraftRunner = static function (string $topic, string $draft, string $notes, string $action) use ($flow): PublishDraftPayload {
+            $ip = new Ip(new PublishDraftPayload($topic, $draft, $notes, $action));
+            $flow($ip);
+            $flow->await();
+            $data = $ip->data;
+            return $data instanceof PublishDraftPayload
+                ? $data
+                : new PublishDraftPayload($topic, $draft, $notes, $action);
         };
 
         $mcpServer = new McpServer();
         $mcpServer->setGenerateDraftRunner($generateDraftRunner);
+        $mcpServer->setPublishDraftRunner($publishDraftRunner);
 
         return $mcpServer;
     }

@@ -16,10 +16,19 @@ final class McpServer
     /** @var null|callable(string): string */
     private $generateDraftRunner = null;
 
+    /** @var null|callable(string, string, string, string): \App\Model\PublishDraftPayload */
+    private $publishDraftRunner = null;
+
     /** @param callable(string): string $runner */
     public function setGenerateDraftRunner(callable $runner): void
     {
         $this->generateDraftRunner = $runner;
+    }
+
+    /** @param callable(string, string, string, string): \App\Model\PublishDraftPayload $runner */
+    public function setPublishDraftRunner(callable $runner): void
+    {
+        $this->publishDraftRunner = $runner;
     }
     private const SERVER_VERSION = '1.0.0';
     private const UI_RESOURCE_URI_HELLO = 'ui://darkwood/hello';
@@ -112,13 +121,13 @@ final class McpServer
                     ],
                 ],
                 [
-                    'name' => 'PublishDraft',
-                    'description' => 'Publish the draft (topic + draft + optional notes)',
+                    'name' => 'AcceptDraft',
+                    'description' => 'Accept the draft (topic + draft + optional notes)',
                     'inputSchema' => [
                         'type' => 'object',
                         'properties' => [
                             'topic' => ['type' => 'string', 'description' => 'Topic of the article'],
-                            'draft' => ['type' => 'string', 'description' => 'Draft text to publish'],
+                            'draft' => ['type' => 'string', 'description' => 'Draft text to accept'],
                             'notes' => ['type' => 'string', 'description' => 'Optional feedback or approval notes'],
                         ],
                         'required' => ['topic', 'draft'],
@@ -180,36 +189,38 @@ final class McpServer
             ];
         }
 
-        if ($name === 'PublishDraft') {
+        if ($name === 'AcceptDraft' || $name === 'RequestChanges') {
             $topic = $arguments['topic'] ?? '';
             $draft = $arguments['draft'] ?? '';
             $notes = $arguments['notes'] ?? '';
             $topic = is_string($topic) ? trim($topic) : '';
             $draft = is_string($draft) ? $draft : '';
             $notes = is_string($notes) ? $notes : '';
-            $publishedUrl = 'https://example.com/articles/' . preg_replace('/[^a-z0-9-]/', '-', strtolower($topic)) . '-' . substr(md5($draft), 0, 8);
-            $text = "Published successfully.\n\npublishedUrl: " . $publishedUrl . "\n\n(MVP: no actual publish; URL is fake.)";
-            return [
-                'content' => [
-                    ['type' => 'text', 'text' => $text],
-                ],
-                'structuredContent' => (object)['publishedUrl' => $publishedUrl, 'done' => true],
-            ];
-        }
+            $action = $name === 'AcceptDraft'
+                ? \App\Model\PublishDraftPayload::ACTION_ACCEPT
+                : \App\Model\PublishDraftPayload::ACTION_CORRECT;
 
-        if ($name === 'RequestChanges') {
-            $topic = $arguments['topic'] ?? '';
-            $draft = $arguments['draft'] ?? '';
-            $notes = $arguments['notes'] ?? '';
-            $topic = is_string($topic) ? trim($topic) : '';
-            $draft = is_string($draft) ? $draft : '';
-            $notes = is_string($notes) ? $notes : '';
-            $text = "Changes requested. Your notes have been recorded. (Next step will be implemented later.)";
+            if ($this->publishDraftRunner === null) {
+                throw new \RuntimeException('AcceptDraft runner not configured');
+            }
+            $payload = ($this->publishDraftRunner)($topic, $draft, $notes, $action);
+
+            $text = $payload->getMessageText() ?? '';
+            $structuredContent = (object)[
+                'done' => $payload->isDone(),
+            ];
+            if ($payload->getPublishedUrl() !== null) {
+                $structuredContent->publishedUrl = $payload->getPublishedUrl();
+            }
+            if ($payload->getDraftText() !== null && $action === \App\Model\PublishDraftPayload::ACTION_CORRECT) {
+                $structuredContent->draftText = $payload->getDraftText();
+            }
+
             return [
                 'content' => [
                     ['type' => 'text', 'text' => $text],
                 ],
-                'structuredContent' => (object)[],
+                'structuredContent' => $structuredContent,
             ];
         }
 
@@ -401,7 +412,7 @@ HTML;
   <label for="notes">Feedback / Notes</label>
   <textarea id="notes" placeholder="Corrections or approval rationale…"></textarea>
   <div class="buttons">
-    <button type="button" id="publishBtn" disabled>Publish</button>
+    <button type="button" id="acceptBtn" disabled>Accept</button>
     <button type="button" id="correctBtn" disabled>Correct</button>
   </div>
   <div id="error" role="alert" aria-live="polite"></div>
@@ -413,7 +424,7 @@ HTML;
   var draftEl = document.getElementById('draft');
   var notesEl = document.getElementById('notes');
   var generateBtn = document.getElementById('generateBtn');
-  var publishBtn = document.getElementById('publishBtn');
+  var acceptBtn = document.getElementById('acceptBtn');
   var correctBtn = document.getElementById('correctBtn');
   var errorEl = document.getElementById('error');
   var messageEl = document.getElementById('message');
@@ -442,7 +453,7 @@ HTML;
   }
 
   function setActionsEnabled(enabled) {
-    publishBtn.disabled = !enabled;
+    acceptBtn.disabled = !enabled;
     correctBtn.disabled = !enabled;
   }
 
@@ -505,13 +516,13 @@ HTML;
     });
   });
 
-  function doPublish() {
+  function doAccept() {
     var topic = (topicEl.value || '').trim();
     var draft = (draftEl.value || '').trim();
     var notes = (notesEl.value || '').trim();
     clearFeedback();
     var id = callId++;
-    showMessage('Publishing…');
+    showMessage('Accepting…');
     pending[id] = function (err, result, rpcError) {
       if (err || rpcError) {
         showError('Error: ' + (rpcError && rpcError.message ? rpcError.message : (err ? err.message : String(rpcError || err))));
@@ -526,7 +537,7 @@ HTML;
       jsonrpc: '2.0',
       id: id,
       method: 'tools/call',
-      params: { name: 'PublishDraft', arguments: { topic: topic, draft: draft, notes: notes } }
+      params: { name: 'AcceptDraft', arguments: { topic: topic, draft: draft, notes: notes } }
     });
   }
 
@@ -542,7 +553,13 @@ HTML;
         showError('Error: ' + (rpcError && rpcError.message ? rpcError.message : (err ? err.message : String(rpcError || err))));
         return;
       }
-      showMessage('Changes requested (next step will be implemented later).');
+      var text = getResultText(result);
+      var st = result && result.structuredContent ? result.structuredContent : {};
+      if (st.draftText != null) {
+        draftEl.value = st.draftText;
+      }
+      setActionsEnabled(!!draftEl.value.trim());
+      showMessage(text || 'Changes requested. Revised draft updated above.');
     };
     send({
       jsonrpc: '2.0',
@@ -552,7 +569,7 @@ HTML;
     });
   }
 
-  publishBtn.addEventListener('click', doPublish);
+  acceptBtn.addEventListener('click', doAccept);
   correctBtn.addEventListener('click', doCorrect);
 
   draftEl.addEventListener('input', function () {

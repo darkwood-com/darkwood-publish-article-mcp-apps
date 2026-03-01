@@ -23,7 +23,7 @@ final class GenerateDraftFlow extends Flow
     public function __construct(?DriverInterface $driver = null)
     {
         $ipStrategy = new LinearIpStrategy();
-        $normalizeJob = static function (mixed $p): GenerateDraftPayload {
+        $normalizeJob = static function (mixed $p): mixed {
             return self::normalizeJob($p);
         };
         parent::__construct(
@@ -34,21 +34,21 @@ final class GenerateDraftFlow extends Flow
             new SyncHandler(),
             $driver,
         );
-        $this->fn(static function (mixed $p): GenerateDraftPayload {
+        $this->fn(static function (mixed $p): mixed {
             return self::buildJob($p);
-        })->fn(static function (mixed $p): GenerateDraftPayload {
+        })->fn(static function (mixed $p): mixed {
             return self::formatJob($p);
         });
     }
 
     /**
      * @param GenerateDraftPayload|mixed $payload
-     * @return GenerateDraftPayload
+     * @return GenerateDraftPayload|mixed
      */
-    public static function normalizeJob(mixed $payload): GenerateDraftPayload
+    public static function normalizeJob(mixed $payload): mixed
     {
         if (!$payload instanceof GenerateDraftPayload) {
-            return new GenerateDraftPayload('');
+            return $payload;
         }
         $value = trim($payload->getTopic());
         $payload->setNormalizedTopic($value);
@@ -57,12 +57,12 @@ final class GenerateDraftFlow extends Flow
 
     /**
      * @param GenerateDraftPayload|mixed $payload
-     * @return GenerateDraftPayload
+     * @return GenerateDraftPayload|mixed
      */
-    public static function buildJob(mixed $payload): GenerateDraftPayload
+    public static function buildJob(mixed $payload): mixed
     {
         if (!$payload instanceof GenerateDraftPayload) {
-            return new GenerateDraftPayload('');
+            return $payload;
         }
         $topic = $payload->getNormalizedTopic() ?? '';
         $raw = $topic === ''
@@ -78,10 +78,14 @@ final class GenerateDraftFlow extends Flow
      * @param GenerateDraftPayload|mixed $payload
      * @return GenerateDraftPayload
      */
-    public static function formatJob(mixed $payload): GenerateDraftPayload
+    /**
+     * @param GenerateDraftPayload|mixed $payload
+     * @return GenerateDraftPayload|mixed
+     */
+    public static function formatJob(mixed $payload): mixed
     {
         if (!$payload instanceof GenerateDraftPayload) {
-            return new GenerateDraftPayload('');
+            return $payload;
         }
         $raw = $payload->getDraftText() ?? '';
         $payload->setDraftText(trim($raw) . "\n");
