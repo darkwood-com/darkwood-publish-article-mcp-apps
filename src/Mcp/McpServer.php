@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Darkwood\Mcp;
+namespace App\Mcp;
 
 /**
  * Minimal MCP server logic: initialize, tools/list, tools/call, resources/list, resources/read.
@@ -12,6 +12,15 @@ final class McpServer
 {
     private const PROTOCOL_VERSION = '2024-11-05';
     private const SERVER_NAME = 'PHP MCP Apps MVP';
+
+    /** @var null|callable(string): string */
+    private $generateDraftRunner = null;
+
+    /** @param callable(string): string $runner */
+    public function setGenerateDraftRunner(callable $runner): void
+    {
+        $this->generateDraftRunner = $runner;
+    }
     private const SERVER_VERSION = '1.0.0';
     private const UI_RESOURCE_URI_HELLO = 'ui://darkwood/hello';
     private const UI_RESOURCE_URI_ARTICLE = 'ui://darkwood/article';
@@ -160,7 +169,9 @@ final class McpServer
         if ($name === 'GenerateDraft') {
             $topic = $arguments['topic'] ?? '';
             $topic = is_string($topic) ? trim($topic) : '';
-            $draft = $this->generateDraft($topic);
+            $draft = $this->generateDraftRunner !== null
+                ? ($this->generateDraftRunner)($topic)
+                : $this->generateDraft($topic);
             return [
                 'content' => [
                     ['type' => 'text', 'text' => $draft],

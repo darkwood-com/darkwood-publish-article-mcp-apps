@@ -20,12 +20,15 @@ require_once $autoload;
 ini_set('display_errors', '0');
 ini_set('log_errors', '1');
 
-use Darkwood\Mcp\JsonRpcHandler;
-use Darkwood\Mcp\McpServer;
+use App\Mcp\JsonRpcHandler;
+use App\Mcp\McpServer;
+use App\Flow\GenerateDraftFlow;
+use App\Model\GenerateDraftPayload;
 use React\EventLoop\Loop;
 use React\Http\Message\Response;
 use React\Socket\SocketServer;
 use React\Http\HttpServer;
+use Flow\Driver\FiberDriver;
 use Flow\Driver\ReactDriver;
 use Flow\FlowFactory;
 use Flow\Ip;
@@ -99,23 +102,26 @@ $http->listen($socket);
 
 file_put_contents('php://stderr', "MCP endpoint: http://127.0.0.1:{$port}/mcp\n", FILE_APPEND);
 
-$driver = new ReactDriver(Loop::get());
-printf("Use %s\n", $driver::class);
+$loop = Loop::get();
+$httpDriver = new ReactDriver($loop);
+printf("Use %s (HTTP), FiberDriver (flow)\n", $httpDriver::class);
 
-$addOneJob = static function ($data) use ($driver) {
-    printf("Client %d\n", $data);
+$flowDriver = new FiberDriver();
+$generateDraftFlow = new GenerateDraftFlow($flowDriver);
 
-    return $data;
+$flow = (new FlowFactory())->create(static function () use ($generateDraftFlow) {
+    yield $generateDraftFlow;
+}, ['driver' => $flowDriver]);
+
+$generateDraftRunner = static function (string $topic) use ($flow): string {
+    $payload = new GenerateDraftPayload($topic);
+    $flow(new Ip($payload));
+    $flow->await();
+    return $payload->getDraftText() ?? '';
 };
+$mcpServer->setGenerateDraftRunner($generateDraftRunner);
 
-$flow = (new FlowFactory())->create(static function () use (
-    $addOneJob,
-) {
-    yield $addOneJob;
-}, ['driver' => $driver]);
-$flow(new Ip(1));
-
-$driver->tick(1000, function() {
+$httpDriver->tick(1000, function() {
     //printf("coucou\n");
 });
-$flow->await();
+$loop->run();

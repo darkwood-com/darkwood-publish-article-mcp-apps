@@ -47,8 +47,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 require_once dirname(__DIR__) . '/vendor/autoload.php';
 
-use Darkwood\Mcp\McpServer;
-use Darkwood\Mcp\JsonRpcHandler;
+use App\Mcp\McpServer;
+use App\Mcp\JsonRpcHandler;
 
 $body = (string) file_get_contents('php://input');
 $server = new McpServer();

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Darkwood\Mcp;
+namespace App\Mcp;
 
 /**
  * Handles HTTP request: parse JSON-RPC body, dispatch to McpServer, return JSON response.

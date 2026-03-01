@@ -21,9 +21,9 @@ require_once $autoload;
 ini_set('display_errors', '0');
 ini_set('log_errors', '1');
 
-use Darkwood\Mcp\JsonRpcHandler;
-use Darkwood\Mcp\McpServer;
-use Darkwood\Mcp\StdioTransport;
+use App\Mcp\JsonRpcHandler;
+use App\Mcp\McpServer;
+use App\Mcp\StdioTransport;
 use Flow\Driver\ReactDriver;
 use Flow\FlowFactory;
 use Flow\Ip;

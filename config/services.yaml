@@ -1,0 +1,15 @@
+# When using Symfony (symfony/framework-bundle), this config excludes Model (and similar)
+# from autowiring, like flowvox. Without Symfony this file is not loaded.
+
+parameters: {}
+
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+
+    App\:
+        resource: '../src/'
+        exclude:
+            - '../src/Model/'
+            - '../src/Entity/'

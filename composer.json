@@ -13,7 +13,7 @@
   },
   "autoload": {
     "psr-4": {
-      "Darkwood\\Mcp\\": "src/"
+      "App\\": "src/"
     }
   }
 }

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Darkwood\Mcp;
+namespace App\Mcp;
 
 /**
  * Stdio JSON-RPC transport for MCP: read line-delimited requests from STDIN,
