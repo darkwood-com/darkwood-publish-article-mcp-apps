@@ -4,11 +4,12 @@
 declare(strict_types=1);
 
 /**
- * Stdio MCP server + Flow worker (single process).
- * Reads newline-delimited JSON-RPC from STDIN, writes responses to STDOUT.
+ * Stdio MCP server. Same MCP + Flow wiring as flow-worker; transport is STDIN/STDOUT only.
  * For Claude Desktop: run as local extension (no HTTP).
  *
  *   php server.php
+ *
+ * For HTTP MCP use: php bin/flow-worker.php (or symfony serve with public/index.php).
  */
 
 $autoload = __DIR__ . '/vendor/autoload.php';
@@ -18,19 +19,14 @@ if (!is_file($autoload)) {
 }
 require_once $autoload;
 
-ini_set('display_errors', '0');
-ini_set('log_errors', '1');
+App\Bootstrap\AppBootstrap::applyPhpSettings();
 
-use App\Mcp\JsonRpcHandler;
-use App\Mcp\McpServer;
+use App\Bootstrap\AppBootstrap;
 use App\Mcp\StdioTransport;
-use Flow\Driver\ReactDriver;
-use Flow\FlowFactory;
-use Flow\Ip;
 use React\EventLoop\Loop;
 
-$mcpServer = new McpServer();
-$jsonRpcHandler = new JsonRpcHandler($mcpServer);
+$mcpServer = AppBootstrap::createMcpServer();
+$jsonRpcHandler = AppBootstrap::createJsonRpcHandler($mcpServer);
 
 $stdin = STDIN;
 $stdout = STDOUT;
@@ -38,19 +34,6 @@ $transport = new StdioTransport($stdin, $stdout);
 $transport->setNonBlocking(true);
 
 $loop = Loop::get();
-$driver = new ReactDriver($loop);
-
-$flow = (new FlowFactory())->create(static function () {
-    yield static function ($data) {
-        return $data;
-    };
-}, ['driver' => $driver]);
-
-$flow(new Ip(1));
-
-$driver->tick(1.0, static function (): void {
-    // Flow periodic tick (keeps loop alive; add real work here if needed)
-});
 
 $loop->addReadStream($stdin, static function () use ($transport, $jsonRpcHandler): void {
     while (($request = $transport->readOneRequest()) !== null) {
@@ -59,6 +42,6 @@ $loop->addReadStream($stdin, static function () use ($transport, $jsonRpcHandler
     }
 });
 
-fwrite(STDERR, "MCP stdio server + Flow worker started. Send JSON-RPC (one object per line) to STDIN.\n");
+fwrite(STDERR, "MCP stdio server started. Send JSON-RPC (one object per line) to STDIN.\n");
 
-$flow->await();
+$loop->run();

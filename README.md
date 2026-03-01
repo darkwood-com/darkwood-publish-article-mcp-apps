@@ -167,7 +167,7 @@ Flow worker ticking every 100ms. Press Ctrl+C to stop.
 **Alternative (legacy):** To use the PHP built-in web server instead of the flow-worker:
 
 ```bash
-php -S localhost:3000 public/router.php
+php -S localhost:3000 public/index.php
 ```
 
 Then use `SERVERS='["http://localhost:3000/mcp"]'` when starting basic-host.
@@ -194,7 +194,7 @@ darkwood-publish-article-mcp-apps/
 ├── bin/
 │   └── flow-worker.php # Entrypoint: embedded HTTP server + Flow tick loop
 ├── public/
-│   └── router.php      # Legacy: routes /mcp for php -S
+│   └── index.php       # HTTP front controller: POST /mcp (symfony serve or php -S)
 ├── var/                # Flow SQLite (flow.sqlite), lock (flow.lock)
 └── src/
     ├── McpServer.php       # MCP logic (initialize, tools/list, tools/call, resources/list, resources/read)

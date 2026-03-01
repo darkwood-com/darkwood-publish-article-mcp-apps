@@ -16,32 +16,19 @@ if (!is_file($autoload)) {
 }
 require_once $autoload;
 
-// Prevent PHP errors from being sent as HTML (basic-host expects JSON only)
-ini_set('display_errors', '0');
-ini_set('log_errors', '1');
+App\Bootstrap\AppBootstrap::applyPhpSettings();
 
-use App\Mcp\JsonRpcHandler;
-use App\Mcp\McpServer;
-use App\Flow\GenerateDraftFlow;
-use App\Model\GenerateDraftPayload;
+use App\Bootstrap\AppBootstrap;
 use React\EventLoop\Loop;
 use React\Http\Message\Response;
 use React\Socket\SocketServer;
 use React\Http\HttpServer;
-use Flow\Driver\FiberDriver;
 use Flow\Driver\ReactDriver;
-use Flow\FlowFactory;
-use Flow\Ip;
 
-$mcpServer = new McpServer();
-$jsonRpcHandler = new JsonRpcHandler($mcpServer);
+$mcpServer = AppBootstrap::createMcpServer();
+$jsonRpcHandler = AppBootstrap::createJsonRpcHandler($mcpServer);
 
-$corsHeaders = [
-    'Access-Control-Allow-Origin' => '*',
-    'Access-Control-Allow-Methods' => 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers' => 'Content-Type, mcp-protocol-version, mcp-session-id',
-    'Access-Control-Max-Age' => '86400',
-];
+$corsHeaders = AppBootstrap::getCorsHeaders();
 
 $responseWithCors = static function (int $status, array $headers, string $body) use ($corsHeaders): Response {
     return new Response($status, $corsHeaders + $headers, $body);
@@ -106,22 +93,7 @@ $loop = Loop::get();
 $httpDriver = new ReactDriver($loop);
 printf("Use %s (HTTP), FiberDriver (flow)\n", $httpDriver::class);
 
-$flowDriver = new FiberDriver();
-$generateDraftFlow = new GenerateDraftFlow($flowDriver);
-
-$flow = (new FlowFactory())->create(static function () use ($generateDraftFlow) {
-    yield $generateDraftFlow;
-}, ['driver' => $flowDriver]);
-
-$generateDraftRunner = static function (string $topic) use ($flow): string {
-    $payload = new GenerateDraftPayload($topic);
-    $flow(new Ip($payload));
-    $flow->await();
-    return $payload->getDraftText() ?? '';
-};
-$mcpServer->setGenerateDraftRunner($generateDraftRunner);
-
-$httpDriver->tick(1000, function() {
-    //printf("coucou\n");
+$httpDriver->tick(1000, static function (): void {
+    // Optional periodic work
 });
 $loop->run();
